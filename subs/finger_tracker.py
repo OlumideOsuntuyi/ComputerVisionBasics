@@ -23,6 +23,8 @@ devices = AudioUtilities.GetSpeakers()
 interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
 volume = cast(interface, POINTER(IAudioEndpointVolume))
 
+pyautogui.FAILSAFE = False
+
 def clamp01(x:float):
     return 0 if x < 0 else 1 if x > 1 else x
 
@@ -63,6 +65,8 @@ class FingerTracker:
         }
 
         self.finger_names = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
+
+        self.gesture_action_cooldown = 0
 
     @staticmethod
     def speech(text):
@@ -273,13 +277,20 @@ class FingerTracker:
 
                     thumb_index_distance = self.calculate_finger_distance(positions['thumb_tip'], index_pos)
 
-                    volume.SetMasterVolumeLevelScalar(clamp01(thumb_index_distance / 250.0), None)
+                    #volume.SetMasterVolumeLevelScalar(clamp01(thumb_index_distance / 250.0), None)
                     #pyautogui.moveRel(0, (thumb_index_distance / 250) * 50, duration=1)
                     cv2.putText(frame, f"Finger Distance: {thumb_index_distance}",
                                 (10, y_offset + 100), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 255, 200), 1)
 
-                    if frame_count % 2 == 0 and gesture != "Custom (0 fingers)":
-                        move_mouse_to_normalized(xnorm, ynorm)
+                    #if frame_count % 2 == 0 and gesture != "Custom (0 fingers)":
+                        #move_mouse_to_normalized(xnorm, ynorm)
+
+                    if frame_count - self.gesture_action_cooldown > 10 and gesture != "Custom (0 fingers)": # cooldown of 10 frames (~0.3 seconds)
+                        # press space
+                        if thumb_index_distance > 80:
+                            pyautogui.press('space')
+                            self.gesture_action_cooldown = frame_count
+
 
                     # Announce gesture every 30 frames (about 1 second)
                     if frame_count % 30 == 0 and gesture != "Custom (0 fingers)":
