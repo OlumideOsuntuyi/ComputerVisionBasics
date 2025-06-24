@@ -13,7 +13,12 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 
+from pynput.keyboard import Key, Controller
+from pynput.mouse import Button as mouseButton, Controller as MouseCtrl
+import time
+
 from pathlib import Path
+from window_utility import get_fore_win as  gf_win
 
 running = True
 speech_text = ''
@@ -23,7 +28,13 @@ devices = AudioUtilities.GetSpeakers()
 interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
 volume = cast(interface, POINTER(IAudioEndpointVolume))
 
+keyboard = Controller()
+mouse = MouseCtrl()
+
 pyautogui.FAILSAFE = False
+
+def clamprange(x:float, y:float, r=1):
+    return min(max(x / y, -r), r)
 
 def clamp01(x:float):
     return 0 if x < 0 else 1 if x > 1 else x
@@ -34,6 +45,14 @@ def move_mouse_to_normalized(x_norm, y_norm):
     y = int(y_norm * screen_height)
     pyautogui.moveTo(x, y, duration=0)
 
+def djPos(pos, index, radius):
+    centres = [(160, 240), (480, 240)]
+    return clamprange(pos[0] - centres[index][0],  radius, 2), clamprange(pos[1] - centres[index][1], radius, 2)
+
+def handlemouseturning(x, y, deadzone=0):
+    sensitivity = 50
+    x = x if x < -deadzone or deadzone < x else 0
+    mouse.move(x * sensitivity, y * sensitivity)
 
 class FingerTracker:
     def __init__(self):
@@ -205,7 +224,7 @@ class FingerTracker:
     def track_fingers(self):
         """Main finger tracking function"""
 
-        global running, next_speech_text, volume
+        global running, next_speech_text, volume, keyboard
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -230,11 +249,17 @@ class FingerTracker:
                 for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
                     # Get hand label (Left/Right)
                     hand_label = results.multi_handedness[hand_idx].classification[0].label
+                    hand_id = 0 if hand_label.lower() == 'left' else 1
 
                     # Draw hand tracking
                     frame = self.draw_finger_tracking(
                         frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
                     )
+
+                    j1_pos = (160, 240)
+                    j2_pos = (480, 240)
+                    cv2.circle(frame, j1_pos, 50, (0, 255, 0), -1)  # left joystick
+                    cv2.circle(frame, j2_pos, 50, (0, 255, 0), -1)  # right joystick
 
                     # Get finger positions
                     positions = self.get_finger_positions(hand_landmarks.landmark)
@@ -273,6 +298,7 @@ class FingerTracker:
 
 
                     index_pos: tuple[float, float] = positions['index_tip']
+                    xj_pos, yj_pos = djPos(index_pos, hand_id, 50)
                     xnorm, ynorm = (index_pos[0] / 640.0, index_pos[1] / 480.0)
 
                     thumb_index_distance = self.calculate_finger_distance(positions['thumb_tip'], index_pos)
@@ -282,20 +308,28 @@ class FingerTracker:
                     cv2.putText(frame, f"Finger Distance: {thumb_index_distance}",
                                 (10, y_offset + 100), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 255, 200), 1)
 
-                    #if frame_count % 2 == 0 and gesture != "Custom (0 fingers)":
-                        #move_mouse_to_normalized(xnorm, ynorm)
+                    cv2.putText(frame, f"Index Position: x={index_pos[0]}, y={index_pos[1]}",
+                                (10, y_offset + 125), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (40, 40, 40), 1)
 
-                    if frame_count - self.gesture_action_cooldown > 10 and gesture != "Custom (0 fingers)": # cooldown of 10 frames (~0.3 seconds)
-                        # press space
-                        if thumb_index_distance > 80:
-                            pyautogui.press('space')
-                            self.gesture_action_cooldown = frame_count
+                    if gesture != "Custom (0 fingers)" and gf_win() == 'minecraft1.21.6singleplayer':
+                        # press w for positive and s for negative
+                        if hand_id == 0:
+                            handlemouseturning(xj_pos, yj_pos, 1)
+                        else:
+                            keys = [('d', 'a'), ('s', 'w')]
+                            dead_zone = 1
+                            curr_key1 = keys[0][0] if xj_pos > dead_zone else keys[0][1] if xj_pos < -dead_zone else None
+                            curr_key2 = keys[1][0] if yj_pos > dead_zone else keys[1][1] if yj_pos < -dead_zone else None
+                            for kgrp in keys:
+                                for k in kgrp:
+                                    if k != curr_key1 or k != curr_key2:
+                                        keyboard.release(k)
 
+                            if curr_key1 is not None:
+                                keyboard.press(curr_key1)
 
-                    # Announce gesture every 30 frames (about 1 second)
-                    if frame_count % 30 == 0 and gesture != "Custom (0 fingers)":
-                        if hand_idx == 0:  # Only announce for first hand
-                            next_speech_text = f"{hand_label} hand showing {gesture}"
+                            if curr_key2 is not None:
+                                keyboard.press(curr_key2)
 
             else:
                 cv2.putText(frame, "No hands detected", (10, 30),
